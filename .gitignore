@@ -51,3 +51,10 @@ Downloads/
 *.pkl
 *.h5
 *.weights
+
+src/api
+
+assets/
+
+entities/
+

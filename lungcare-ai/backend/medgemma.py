@@ -8,7 +8,7 @@ import torch, os, io, gc
 # -------------------------------
 # 🔐 Login and Load Model Once
 # -------------------------------
-login(token="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")
+login(token="")
 pipe = pipeline(
     "image-text-to-text",
     model="google/medgemma-4b-it",
