@@ -2,44 +2,35 @@ from flask import Flask, request, jsonify
 from flask_cors import CORS
 from PIL import Image
 from transformers import pipeline
+import torch
 from huggingface_hub import login
-import torch, os, io, gc
+import io, os, gc
 
 # -------------------------------
 # 🔐 Login and Load Model Once
 # -------------------------------
-login(token="")
-pipe = pipeline(
-    "image-text-to-text",
-    model="google/medgemma-4b-it",
-    torch_dtype=torch.bfloat16,
-    device="mps"  # or "cuda" if GPU
-)
+
+
 
 app = Flask(__name__)
 CORS(app)
 
 # -------------------------------
-# 📁 Your Base Test Folder
+# 🧠 Few-shot example paths
 # -------------------------------
-TEST_DIR = "/Users/muhammadhutaib/Documents/folder/test"
-LABEL_FOLDERS = ["normal", "adenocarcinoma", "squamous.cell.carcinoma", "large.cell.carcinoma"]
+ex_adeno_path = "/Users/muhammadhutaib/Downloads/test/adenocarcinoma/000114.png"
+ex_squamous_path = "/Users/muhammadhutaib/Downloads/test/squamous.cell.carcinoma/000111.png"
+ex_large_path = "/Users/muhammadhutaib/Downloads/test/large.cell.carcinoma/000108.png"
+ex_normal_path = "/Users/muhammadhutaib/Downloads/test/normal/6.png"
+
+# Preload few-shot images
+ex_adeno = Image.open(ex_adeno_path).convert("RGB")
+ex_squamous = Image.open(ex_squamous_path).convert("RGB")
+ex_large = Image.open(ex_large_path).convert("RGB")
+ex_normal = Image.open(ex_normal_path).convert("RGB")
 
 # -------------------------------
-# 🔍 Helper: Detect Path & Label
-# -------------------------------
-def find_image_label_and_path(filename):
-    """Search all label folders for the given image name."""
-    for label in LABEL_FOLDERS:
-        folder_path = os.path.join(TEST_DIR, label)
-        for file in os.listdir(folder_path):
-            if file == filename:
-                full_path = os.path.join(folder_path, file)
-                return label, full_path
-    return None, None
-
-# -------------------------------
-# 🔍 Flask Route
+# 🔍 Inference Route
 # -------------------------------
 @app.route("/analyze", methods=["POST"])
 def analyze():
@@ -50,75 +41,78 @@ def analyze():
         file = request.files["image"]
         filename = file.filename
 
-        # 🧭 Detect from which folder (label) the image was uploaded
-        label, detected_path = find_image_label_and_path(filename)
+        # --- Load uploaded image into memory like your test_image_path ---
+        image_bytes = file.read()
+        img = Image.open(io.BytesIO(image_bytes)).convert("RGB")
 
-        if not detected_path:
-            return jsonify({"error": "File not found in any label folder"}), 404
+        # Save to disk (optional for debugging)
+        upload_dir = "/Users/muhammadhutaib/Documents/Python/medgemma-app/squamous.cell.carcinoma"
+        os.makedirs(upload_dir, exist_ok=True)
+        upload_path = os.path.join(upload_dir, filename)
+        img.save(upload_path)
 
-        print(f"✅ Detected label: {label}")
-        print(f"✅ Detected path: {detected_path}")
-
-        # Load image for inference
-        img = Image.open(detected_path).convert("RGB")
-
-        # -------------------------------
-        # 🧠 Build Dynamic LLM Prompt
-        # -------------------------------
+        # --- Build the few-shot prompt (same as notebook) ---
         text_prompt = f"""
 You are an expert histopathologist specializing in lung tissue diagnosis.
 
-Here are the reference examples and their true categories:
+Here are example images and their correct classifications:
 
-1️⃣ Normal → /Users/muhammadhutaib/Downloads/test/normal/6.png  
-2️⃣ Adenocarcinoma → /Users/muhammadhutaib/Downloads/test/adenocarcinoma/000114.png  
-3️⃣ Squamous Cell Carcinoma → /Users/muhammadhutaib/Downloads/test/squamous.cell.carcinoma/000111.png  
-4️⃣ Large Cell Carcinoma → /Users/muhammadhutaib/Downloads/test/large.cell.carcinoma/000108.png  
+Example 1 (Normal): {ex_normal_path}
+<image> → Normal: clear alveolar spaces, uniform nuclei, no malignant growth.
 
-Now analyze the following uploaded image:
+Example 2 (Adenocarcinoma): {ex_adeno_path}
+<image> → Adenocarcinoma: glandular structures, mucus formation, irregular cell nuclei.
 
-📂 File Path: {detected_path}  
-🏷️ True Label (from folder): {label}  
+Example 3 (Squamous Cell Carcinoma): {ex_squamous_path}
+<image> → Squamous cell carcinoma: keratin pearls, intercellular bridges, dense pink cytoplasm.
+
+Example 4 (Large Cell Carcinoma): {ex_large_path}
+<image> → Large cell carcinoma: large undifferentiated cells with prominent nucleoli and poor differentiation.
+
+Now analyze the following lung histopathology image: {upload_path}
 <image>
 
-Predict its class again to confirm which category it most closely matches:
+Decide which category it most closely matches:
 [normal, adenocarcinoma, squamous cell carcinoma, large cell carcinoma].
 Respond only with the category name.
 """
 
         messages = [
-            {"role": "system", "content": [{"type": "text", "text": "You are an expert histopathologist."}]},
+            {"role": "system", "content": [{"type": "text", "text": "You are an expert radiologist."}]},
             {
                 "role": "user",
                 "content": [
                     {"type": "text", "text": text_prompt},
-                    {"type": "image", "image": img}
+                    {"type": "image", "image": ex_normal},
+                    {"type": "image", "image": ex_adeno},
+                    {"type": "image", "image": ex_squamous},
+                    {"type": "image", "image": ex_large},
+                    {"type": "image", "image": img},  
                 ],
             },
         ]
 
-        # 🧠 Run Inference
-        output = pipe(text=messages, max_new_tokens=128)
+        # --- Run inference ---
+        output = pipe(text=messages, max_new_tokens=256)
         prediction = output[0]["generated_text"][-1]["content"].strip()
 
-        # 🧹 Clean up
+        # --- Clean up memory ---
         gc.collect()
         if torch.has_mps:
             torch.mps.empty_cache()
 
         return jsonify({
-         "classification": prediction,
-         "confidence": 0.92  # placeholder or computed if available
-        
-})
+            "classification": prediction,
+            "confidence": 0.9
+        })
 
     except Exception as e:
         gc.collect()
-        if torch.has_mps:
-            torch.mps.empty_cache()
+        if torch.backends.mps.is_available():
+         torch.mps.empty_cache()
         print(f"❌ Error: {e}")
         return jsonify({"error": str(e)}), 500
 
 
 if __name__ == "__main__":
-    app.run(port=5003, debug=True)
+    app.run(port=5002, debug=False)
