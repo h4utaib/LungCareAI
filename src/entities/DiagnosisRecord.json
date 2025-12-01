@@ -1,0 +1,40 @@
+{
+    "name": "DiagnosisRecord",
+    "type": "object",
+    "properties": {
+      "diagnosis_type": {
+        "type": "string",
+        "enum": [
+          "adenocarcinoma",
+          "large_cell_carcinoma",
+          "squamous_cell_carcinoma",
+          "normal"
+        ],
+        "description": "Type of diagnosis predicted"
+      },
+      "method": {
+        "type": "string",
+        "enum": [
+          "deep_learning",
+          "medgemma"
+        ],
+        "description": "Method used for diagnosis"
+      },
+      "confidence": {
+        "type": "number",
+        "description": "Confidence score of prediction"
+      },
+      "image_url": {
+        "type": "string",
+        "description": "URL of the CT scan image"
+      },
+      "notes": {
+        "type": "string",
+        "description": "Additional notes"
+      }
+    },
+    "required": [
+      "diagnosis_type",
+      "method"
+    ]
+  }
